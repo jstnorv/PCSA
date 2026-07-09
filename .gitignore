@@ -1,0 +1,35 @@
+# Python bytecode and caches
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Tooling caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
+
+# Local environment and secrets
+.env
+.env.*
+
+# Local storage runtime data
+storage/vector_db/**
+!storage/vector_db/.gitkeep
+
+# Optional private knowledge notes
+# Uncomment this if your knowledge base contains personal/private files.
+# storage/knowledge_base/**
+# !storage/knowledge_base/.gitkeep
+
+# macOS
+.DS_Store
