@@ -1,5 +1,7 @@
 # PCSA (Personal Cognitive Sovereignty Agent)
 
+[![CI](https://github.com/jstnorv/PCSA/actions/workflows/ci.yml/badge.svg)](https://github.com/jstnorv/PCSA/actions/workflows/ci.yml)
+
 A local-first Python agent architecture for personal knowledge workflows using plain Markdown, local embeddings, and local LLM inference.
 
 ## Philosophy
@@ -64,3 +66,11 @@ Runtime settings are managed in `config.py` with environment variable overrides:
 
 - This repository intentionally avoids LangChain/LlamaIndex abstractions.
 - All inference and retrieval are designed for local execution.
+
+## Continuous Integration
+
+The GitHub Actions workflow validates each push and pull request to `main` by:
+
+- Installing dependencies from `requirements.txt`
+- Running `python -m compileall .`
+- Running a minimal import smoke test for core modules
