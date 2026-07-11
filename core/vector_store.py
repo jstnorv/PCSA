@@ -27,7 +27,16 @@ class ChromaVectorStore:
 
 		ids = [doc.doc_id for doc in documents]
 		texts = [doc.content for doc in documents]
-		metadatas = [{"source_path": doc.source_path} for doc in documents]
+		metadatas = [
+			{
+				"source_path": doc.source_path,
+				"source_rel_path": doc.source_rel_path,
+				"chunk_index": doc.chunk_index,
+				"start_offset": doc.start_offset,
+				"end_offset": doc.end_offset,
+			}
+			for doc in documents
+		]
 
 		self._collection.upsert(
 			ids=ids,
@@ -35,6 +44,12 @@ class ChromaVectorStore:
 			embeddings=embeddings,
 			metadatas=metadatas,
 		)
+
+	def delete_by_source_rel_path(self, source_rel_path: str) -> None:
+		self._collection.delete(where={"source_rel_path": source_rel_path})
+
+	def count(self) -> int:
+		return self._collection.count()
 
 	def query(self, query_embedding: list[float], top_k: int = 4) -> list[str]:
 		result = self._collection.query(

@@ -17,6 +17,8 @@ class AppConfig(BaseModel):
 	ollama_chat_model: str = Field(default="llama3.1")
 	ollama_embedding_model: str = Field(default="nomic-embed-text")
 	ollama_timeout_seconds: int = Field(default=60, ge=1)
+	chunk_size_chars: int = Field(default=1200, ge=200)
+	chunk_overlap_chars: int = Field(default=200, ge=0)
 
 	memory_window_size: int = Field(default=12, ge=2)
 	retrieval_top_k: int = Field(default=4, ge=1)
@@ -43,9 +45,13 @@ class AppConfig(BaseModel):
 			ollama_chat_model=os.getenv("PCSA_OLLAMA_CHAT_MODEL", "llama3.1"),
 			ollama_embedding_model=os.getenv("PCSA_OLLAMA_EMBED_MODEL", "nomic-embed-text"),
 			ollama_timeout_seconds=int(os.getenv("PCSA_OLLAMA_TIMEOUT_SECONDS", "60")),
+			chunk_size_chars=int(os.getenv("PCSA_CHUNK_SIZE_CHARS", "1200")),
+			chunk_overlap_chars=int(os.getenv("PCSA_CHUNK_OVERLAP_CHARS", "200")),
 			memory_window_size=int(os.getenv("PCSA_MEMORY_WINDOW_SIZE", "12")),
 			retrieval_top_k=int(os.getenv("PCSA_RETRIEVAL_TOP_K", "4")),
 		)
+		if instance.chunk_overlap_chars >= instance.chunk_size_chars:
+			raise ValueError("PCSA_CHUNK_OVERLAP_CHARS must be smaller than PCSA_CHUNK_SIZE_CHARS")
 		return instance.resolve_paths()
 
 

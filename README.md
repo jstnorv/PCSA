@@ -43,9 +43,13 @@ PCSA/
    ```
 3. Ensure Ollama is running locally (default endpoint: `http://localhost:11434`).
 4. Put Markdown notes into `storage/knowledge_base/`.
-5. Start the agent:
+5. Build or refresh the local vector index:
    ```bash
-   python3 main.py
+   python3 main.py ingest
+   ```
+6. Start the agent:
+   ```bash
+   python3 main.py chat
    ```
 
 ## Configuration
@@ -59,6 +63,8 @@ Runtime settings are managed in `config.py` with environment variable overrides:
 - `PCSA_OLLAMA_CHAT_MODEL`
 - `PCSA_OLLAMA_EMBED_MODEL`
 - `PCSA_OLLAMA_TIMEOUT_SECONDS`
+- `PCSA_CHUNK_SIZE_CHARS`
+- `PCSA_CHUNK_OVERLAP_CHARS`
 - `PCSA_MEMORY_WINDOW_SIZE`
 - `PCSA_RETRIEVAL_TOP_K`
 
@@ -74,3 +80,11 @@ The GitHub Actions workflow validates each push and pull request to `main` by:
 - Installing dependencies from `requirements.txt`
 - Running `python -m compileall .`
 - Running a minimal import smoke test for core modules
+
+## Smoke Test
+
+Run a local ingestion idempotency smoke test (no Ollama required):
+
+```bash
+python3 scripts/smoke_ingest_idempotency.py
+```
