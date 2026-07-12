@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from agent.directives import CORE_DIRECTIVE_SYSTEM_PROMPT
 from agent.memory import SlidingWindowMemory
 from agent.session_state import (
 	SessionState,
@@ -41,10 +42,7 @@ class PCSAgent:
 
 		self.state_machine.transition(AgentState.INFER)
 		context_block = "\n\n".join(contexts) if contexts else "(no retrieved context)"
-		base_system_prompt = (
-			"You are a local Personal Cognitive Sovereignty Agent.\n"
-			"Use only local context and conversation memory.\n\n"
-		)
+		base_system_prompt = CORE_DIRECTIVE_SYSTEM_PROMPT
 		system_prompt = build_scoped_system_prompt(base_system_prompt, self.session_state)
 		prompt = (
 			f"{system_prompt}"
