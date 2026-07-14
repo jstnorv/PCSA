@@ -7,7 +7,7 @@ A local-first Python agent architecture for personal knowledge workflows using p
 ## Philosophy
 
 - Absolute local control
-- Zero external cloud dependencies
+- No mandatory external cloud dependency for baseline operation
 - Minimal framework bloat
 - Plain-text Markdown workflow
 
@@ -41,7 +41,7 @@ PCSA/
    ```bash
    pip install -r requirements.txt
    ```
-3. Ensure Ollama is running locally (default endpoint: `http://localhost:11434`).
+3. Ensure Ollama is running locally (default endpoint: `http://localhost:11434`) for full local inference.
 4. Put Markdown notes into `storage/knowledge_base/`.
 5. Build or refresh the local vector index:
    ```bash
@@ -93,7 +93,7 @@ Runtime settings are managed in `config.py` with environment variable overrides:
 ## Notes
 
 - This repository intentionally avoids LangChain/LlamaIndex abstractions.
-- All inference and retrieval are designed for local execution.
+- Retrieval and default inference paths are local-first; external compute is optional and consent-gated unless trust override is explicitly enabled.
 
 ## Trust Gateway (Delegated Computation Controller)
 
@@ -147,6 +147,7 @@ The GitHub Actions workflow validates each push and pull request to `main` by:
 - Installing dependencies from `requirements.txt`
 - Running `python -m compileall .`
 - Running a minimal import smoke test for core modules
+- Running Trust Gateway compliance checks
 
 ## Smoke Test
 
