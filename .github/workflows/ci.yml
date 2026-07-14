@@ -35,3 +35,6 @@ jobs:
       - name: Import smoke test
         run: |
           python -c "import config, core, llm, agent; print('import-ok')"
+
+      - name: Trust Gateway compliance checks
+        run: python scripts/trust_gateway_compliance.py

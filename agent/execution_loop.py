@@ -1,5 +1,14 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
+from typing import Protocol
+
+from agent.delegated_controller import (
+	DelegatedComputationController,
+	DelegationDecision,
+	EscalationProposal,
+	ExecutionRoute,
+)
 from agent.directives import CORE_DIRECTIVE_SYSTEM_PROMPT
 from agent.memory import SlidingWindowMemory
 from agent.session_state import (
@@ -13,6 +22,26 @@ from core.vector_store import ChromaVectorStore
 from llm.ollama_client import OllamaClient
 
 
+class ExternalInferenceClient(Protocol):
+	def generate(self, prompt: str) -> str: ...
+
+
+@dataclass
+class ControlledTurnResult:
+	answer: str
+	local_answer: str
+	decision: DelegationDecision
+	escalated: bool
+
+	@property
+	def requires_confirmation(self) -> bool:
+		return self.decision.requires_confirmation and self.decision.route == ExecutionRoute.EXTERNAL
+
+	@property
+	def escalation_proposal(self) -> EscalationProposal | None:
+		return self.decision.proposal
+
+
 class PCSAgent:
 	"""Minimal local-first execution loop for retrieval-augmented responses."""
 
@@ -24,6 +53,8 @@ class PCSAgent:
 		memory: SlidingWindowMemory,
 		retrieval_top_k: int = 4,
 		session_state: SessionState | None = None,
+		external_client: ExternalInferenceClient | None = None,
+		delegated_controller: DelegatedComputationController | None = None,
 	) -> None:
 		self.llm_client = llm_client
 		self.embedding_client = embedding_client
@@ -31,15 +62,18 @@ class PCSAgent:
 		self.memory = memory
 		self.retrieval_top_k = retrieval_top_k
 		self.session_state = session_state
+		self.external_client = external_client
+		self.delegated_controller = delegated_controller or DelegatedComputationController()
 		self.state_machine = AgentStateMachine()
 
-	def run_turn(self, user_input: str) -> str:
+	def _retrieve_contexts(self, user_input: str) -> list[str]:
 		self.state_machine.transition(AgentState.RETRIEVE_CONTEXT)
 		raw_query = user_input.strip()
 		scoped_query = build_scoped_rag_query(raw_query, self.session_state)
 		query_embedding = self.embedding_client.embed_text(scoped_query)
-		contexts = self.vector_store.query(query_embedding, top_k=self.retrieval_top_k)
+		return self.vector_store.query(query_embedding, top_k=self.retrieval_top_k)
 
+	def _generate_local_answer(self, user_input: str, contexts: list[str]) -> str:
 		self.state_machine.transition(AgentState.INFER)
 		context_block = "\n\n".join(contexts) if contexts else "(no retrieved context)"
 		base_system_prompt = CORE_DIRECTIVE_SYSTEM_PROMPT
@@ -51,12 +85,77 @@ class PCSAgent:
 			f"User Input:\n{user_input}\n\n"
 			"Assistant Response:"
 		)
+		return self.llm_client.generate(prompt)
 
-		answer = self.llm_client.generate(prompt)
-
+	def _persist_turn(self, user_input: str, answer: str) -> None:
 		self.state_machine.transition(AgentState.PERSIST)
 		self.memory.add("user", user_input)
 		self.memory.add("assistant", answer)
-
 		self.state_machine.transition(AgentState.IDLE)
+
+	def _run_external_or_fallback(self, user_input: str, local_answer: str) -> str:
+		if self.external_client is None:
+			return (
+				f"{local_answer}\n\n"
+				"[Delegation approved but no external compute gateway is configured. Returning local result.]"
+			)
+		return self.external_client.generate(user_input)
+
+	def run_turn(self, user_input: str) -> str:
+		contexts = self._retrieve_contexts(user_input)
+		answer = self._generate_local_answer(user_input, contexts)
+		self._persist_turn(user_input, answer)
 		return answer
+
+	def run_turn_with_delegation(
+		self,
+		user_input: str,
+		force_external: bool = False,
+	) -> ControlledTurnResult:
+		contexts = self._retrieve_contexts(user_input)
+		local_answer = self._generate_local_answer(user_input, contexts)
+
+		decision = self.delegated_controller.decide(
+			user_query=user_input,
+			retrieved_contexts=contexts,
+			local_response=local_answer,
+			session_state=self.session_state,
+		)
+
+		if force_external:
+			answer = self._run_external_or_fallback(user_input, local_answer)
+			self._persist_turn(user_input, answer)
+			return ControlledTurnResult(
+				answer=answer,
+				local_answer=local_answer,
+				decision=decision,
+				escalated=True,
+			)
+
+		if decision.route == ExecutionRoute.EXTERNAL and decision.requires_confirmation:
+			# Do not persist until explicit user approval/denial is captured.
+			self.state_machine.transition(AgentState.IDLE)
+			return ControlledTurnResult(
+				answer=local_answer,
+				local_answer=local_answer,
+				decision=decision,
+				escalated=False,
+			)
+
+		if decision.route == ExecutionRoute.EXTERNAL:
+			answer = self._run_external_or_fallback(user_input, local_answer)
+			self._persist_turn(user_input, answer)
+			return ControlledTurnResult(
+				answer=answer,
+				local_answer=local_answer,
+				decision=decision,
+				escalated=True,
+			)
+
+		self._persist_turn(user_input, local_answer)
+		return ControlledTurnResult(
+			answer=local_answer,
+			local_answer=local_answer,
+			decision=decision,
+			escalated=False,
+		)

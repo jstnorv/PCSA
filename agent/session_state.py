@@ -20,6 +20,11 @@ class PriorityLevel(str, Enum):
 	HIGH = "high"
 
 
+class TrustPreference(str, Enum):
+	INTERCEPT_REQUIRED = "intercept_required"
+	ALWAYS_TRUST_CLOUD = "always_trust_cloud"
+
+
 class SessionState(BaseModel):
 	"""Foundational session state for scoped, persistent agent behavior.
 
@@ -45,10 +50,21 @@ class SessionState(BaseModel):
 
 	intent_category: str = Field(default="general")
 	extraction_confidence: float | None = Field(default=None, ge=0.0, le=1.0)
+	trust_preference: TrustPreference = Field(default=TrustPreference.INTERCEPT_REQUIRED)
+	always_trust_cloud: bool = Field(default=False)
 	metadata: dict[str, Any] = Field(default_factory=dict)
 
 	def touch(self) -> None:
 		self.updated_at = datetime.now(UTC)
+
+	def set_trust_preference(self, always_trust_cloud: bool) -> None:
+		self.always_trust_cloud = always_trust_cloud
+		self.trust_preference = (
+			TrustPreference.ALWAYS_TRUST_CLOUD
+			if always_trust_cloud
+			else TrustPreference.INTERCEPT_REQUIRED
+		)
+		self.touch()
 
 
 def _extract_first_json_object(raw_text: str) -> dict[str, Any]:
