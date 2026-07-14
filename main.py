@@ -65,13 +65,14 @@ def _build_runtime():
 		retrieval_top_k=cfg.retrieval_top_k,
 		session_state=session_state,
 		delegated_controller=delegated_controller,
+		failure_cooldown_seconds=cfg.failure_cooldown_seconds,
 	)
 	return agent, llm_client, embedding_client, vector_store, setup_profile
 
 
 def run_ingest() -> int:
 	from config import get_config
-	from core.pipeline import ingest_knowledge_base
+	from core.pipeline import ingest_knowledge_base, ingest_knowledge_base_incremental
 
 	cfg = get_config()
 	agent, llm_client, embedding_client, vector_store, _ = _build_runtime()
@@ -82,13 +83,23 @@ def run_ingest() -> int:
 		print("Start Ollama before running ingestion.")
 		return 1
 
-	report = ingest_knowledge_base(
-		knowledge_base_dir=cfg.knowledge_base_dir,
-		vector_store=vector_store,
-		embedding_client=embedding_client,
-		chunk_size_chars=cfg.chunk_size_chars,
-		chunk_overlap_chars=cfg.chunk_overlap_chars,
-	)
+	try:
+		report = ingest_knowledge_base_incremental(
+			knowledge_base_dir=cfg.knowledge_base_dir,
+			vector_store=vector_store,
+			embedding_client=embedding_client,
+			chunk_size_chars=cfg.chunk_size_chars,
+			chunk_overlap_chars=cfg.chunk_overlap_chars,
+			manifest_path=cfg.ingest_manifest_path,
+		)
+	except Exception:
+		report = ingest_knowledge_base(
+			knowledge_base_dir=cfg.knowledge_base_dir,
+			vector_store=vector_store,
+			embedding_client=embedding_client,
+			chunk_size_chars=cfg.chunk_size_chars,
+			chunk_overlap_chars=cfg.chunk_overlap_chars,
+		)
 
 	print("Ingestion completed.")
 	print(f"- Markdown files discovered: {report.total_markdown_files}")
@@ -101,7 +112,7 @@ def run_ingest() -> int:
 
 def bootstrap_knowledge_index(auto_ingest: bool = True) -> tuple[PCSAgent, str | None, bool]:
 	from config import get_config
-	from core.pipeline import ingest_knowledge_base
+	from core.pipeline import ingest_knowledge_base, ingest_knowledge_base_incremental
 
 	cfg = get_config()
 	agent, llm_client, embedding_client, vector_store, setup_profile = _build_runtime()
@@ -114,13 +125,23 @@ def bootstrap_knowledge_index(auto_ingest: bool = True) -> tuple[PCSAgent, str |
 		)
 
 	if auto_ingest and not warning:
-		ingest_knowledge_base(
-			knowledge_base_dir=cfg.knowledge_base_dir,
-			vector_store=vector_store,
-			embedding_client=embedding_client,
-			chunk_size_chars=cfg.chunk_size_chars,
-			chunk_overlap_chars=cfg.chunk_overlap_chars,
-		)
+		try:
+			ingest_knowledge_base_incremental(
+				knowledge_base_dir=cfg.knowledge_base_dir,
+				vector_store=vector_store,
+				embedding_client=embedding_client,
+				chunk_size_chars=cfg.chunk_size_chars,
+				chunk_overlap_chars=cfg.chunk_overlap_chars,
+				manifest_path=cfg.ingest_manifest_path,
+			)
+		except Exception:
+			ingest_knowledge_base(
+				knowledge_base_dir=cfg.knowledge_base_dir,
+				vector_store=vector_store,
+				embedding_client=embedding_client,
+				chunk_size_chars=cfg.chunk_size_chars,
+				chunk_overlap_chars=cfg.chunk_overlap_chars,
+			)
 
 	strict_local_only = bool(setup_profile.applied_config.get("strict_local_only", False))
 	return agent, warning, strict_local_only
@@ -198,6 +219,53 @@ def run_chat(skip_ingest: bool = False) -> int:
 		print(f"Agent> {result.answer}")
 
 
+def run_doctor() -> int:
+	from agent.setup_optimizer import LocalSetupOptimizer
+	from config import get_config
+	from core.vector_store import ChromaVectorStore
+
+	cfg = get_config()
+	optimizer = LocalSetupOptimizer()
+	capabilities = optimizer.detect_capabilities(cfg)
+	vector_store = ChromaVectorStore(cfg.vector_db_dir)
+
+	print("PCSA Doctor Report")
+	print(f"- Project root: {cfg.project_root}")
+	print(f"- Knowledge base path: {cfg.knowledge_base_dir}")
+	print(f"- Vector DB path: {cfg.vector_db_dir}")
+	print(f"- Session state path: {cfg.session_state_path}")
+	print(f"- Setup profile path: {cfg.setup_profile_path}")
+	print(f"- Ingest manifest path: {cfg.ingest_manifest_path}")
+
+	all_markdown = [p for p in cfg.knowledge_base_dir.rglob("*.md") if p.is_file()]
+	print(f"- Markdown files discovered: {len(all_markdown)}")
+	print(f"- Vector records available: {vector_store.count()}")
+
+	print(f"- CPU cores: {capabilities.cpu_count}")
+	print(f"- Detected memory (GB): {capabilities.total_memory_gb}")
+	print(f"- Ollama reachable: {'yes' if capabilities.ollama_reachable else 'no'}")
+	if capabilities.available_models:
+		print(f"- Local models: {', '.join(capabilities.available_models[:8])}")
+	else:
+		print("- Local models: none detected")
+
+	if not capabilities.ollama_reachable:
+		print("Recommendation: local model service is offline. PCSA will use degraded local mode.")
+		print("Action: start Ollama when possible for full local inference.")
+	elif not capabilities.available_models:
+		print("Recommendation: install at least one local chat model and one embedding model.")
+
+	if cfg.strict_local_only:
+		print("Policy: strict local mode is enabled (external delegation disabled).")
+
+	if not cfg.auto_ingest_on_chat_start:
+		print("Startup mode: auto-ingest on chat start is OFF (universal floor default).")
+		print("Action: run `python3 main.py ingest` when you want to refresh index now.")
+
+	print("Doctor completed.")
+	return 0
+
+
 def _parse_args() -> argparse.Namespace:
 	parser = argparse.ArgumentParser(description="PCSA local-first runtime")
 	subparsers = parser.add_subparsers(dest="command")
@@ -206,6 +274,12 @@ def _parse_args() -> argparse.Namespace:
 	ingest_parser.set_defaults(command="ingest")
 
 	chat_parser = subparsers.add_parser("chat", help="Run interactive chat loop")
+	ingest_group = chat_parser.add_mutually_exclusive_group()
+	ingest_group.add_argument(
+		"--ingest-on-start",
+		action="store_true",
+		help="Run ingestion before chat startup",
+	)
 	chat_parser.add_argument(
 		"--skip-ingest",
 		action="store_true",
@@ -213,18 +287,29 @@ def _parse_args() -> argparse.Namespace:
 	)
 	chat_parser.set_defaults(command="chat")
 
+	doctor_parser = subparsers.add_parser("doctor", help="Run local readiness diagnostics")
+	doctor_parser.set_defaults(command="doctor")
+
 	return parser.parse_args()
 
 
 def main() -> int:
+	from config import get_config
+
 	args = _parse_args()
 	if args.command == "ingest":
 		return run_ingest()
 	if args.command == "chat":
-		return run_chat(skip_ingest=bool(args.skip_ingest))
+		skip_ingest = not bool(args.ingest_on_start)
+		if bool(args.skip_ingest):
+			skip_ingest = True
+		return run_chat(skip_ingest=skip_ingest)
+	if args.command == "doctor":
+		return run_doctor()
 
-	# Default behavior preserves previous UX while keeping explicit commands available.
-	return run_chat(skip_ingest=False)
+	# Universal floor default: avoid heavy startup ingestion unless explicitly requested.
+	cfg = get_config()
+	return run_chat(skip_ingest=not cfg.auto_ingest_on_chat_start)
 
 
 if __name__ == "__main__":

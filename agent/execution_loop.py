@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from typing import Protocol
 
 from agent.delegated_controller import (
@@ -55,6 +56,7 @@ class PCSAgent:
 		session_state: SessionState | None = None,
 		external_client: ExternalInferenceClient | None = None,
 		delegated_controller: DelegatedComputationController | None = None,
+		failure_cooldown_seconds: int = 30,
 	) -> None:
 		self.llm_client = llm_client
 		self.embedding_client = embedding_client
@@ -64,17 +66,63 @@ class PCSAgent:
 		self.session_state = session_state
 		self.external_client = external_client
 		self.delegated_controller = delegated_controller or DelegatedComputationController()
+		self.failure_cooldown_seconds = max(1, failure_cooldown_seconds)
+		self._retrieval_blocked_until: datetime | None = None
+		self._llm_blocked_until: datetime | None = None
 		self.state_machine = AgentStateMachine()
+
+	def _in_cooldown(self, blocked_until: datetime | None) -> bool:
+		return blocked_until is not None and datetime.now(UTC) < blocked_until
+
+	def _mark_retrieval_failure(self) -> None:
+		self._retrieval_blocked_until = datetime.now(UTC) + timedelta(seconds=self.failure_cooldown_seconds)
+
+	def _mark_llm_failure(self) -> None:
+		self._llm_blocked_until = datetime.now(UTC) + timedelta(seconds=self.failure_cooldown_seconds)
+
+	def _deterministic_fallback_answer(self, user_input: str, contexts: list[str], reason: str) -> str:
+		if contexts:
+			snippets = []
+			for idx, ctx in enumerate(contexts[:2], start=1):
+				first_line = ctx.strip().splitlines()[0].strip() if ctx.strip() else "(empty context)"
+				snippets.append(f"{idx}. {first_line[:220]}")
+			snippet_block = "\n".join(snippets)
+			return (
+				"Operating in degraded local mode.\n"
+				f"Reason: {reason}.\n"
+				"Best available context summary:\n"
+				f"{snippet_block}\n\n"
+				f"Request captured: {user_input}"
+			)
+
+		return (
+			"Operating in degraded local mode with no retrievable context.\n"
+			f"Reason: {reason}.\n"
+			f"Request captured: {user_input}\n"
+			"Suggestion: keep your request concise or retry when local model service is responsive."
+		)
 
 	def _retrieve_contexts(self, user_input: str) -> list[str]:
 		self.state_machine.transition(AgentState.RETRIEVE_CONTEXT)
+		if self._in_cooldown(self._retrieval_blocked_until):
+			return []
 		raw_query = user_input.strip()
 		scoped_query = build_scoped_rag_query(raw_query, self.session_state)
-		query_embedding = self.embedding_client.embed_text(scoped_query)
-		return self.vector_store.query(query_embedding, top_k=self.retrieval_top_k)
+		try:
+			query_embedding = self.embedding_client.embed_text(scoped_query)
+			return self.vector_store.query(query_embedding, top_k=self.retrieval_top_k)
+		except Exception:
+			self._mark_retrieval_failure()
+			return []
 
 	def _generate_local_answer(self, user_input: str, contexts: list[str]) -> str:
 		self.state_machine.transition(AgentState.INFER)
+		if self._in_cooldown(self._llm_blocked_until):
+			return self._deterministic_fallback_answer(
+				user_input=user_input,
+				contexts=contexts,
+				reason="local inference temporarily paused after recent failure",
+			)
 		context_block = "\n\n".join(contexts) if contexts else "(no retrieved context)"
 		base_system_prompt = CORE_DIRECTIVE_SYSTEM_PROMPT
 		system_prompt = build_scoped_system_prompt(base_system_prompt, self.session_state)
@@ -85,7 +133,15 @@ class PCSAgent:
 			f"User Input:\n{user_input}\n\n"
 			"Assistant Response:"
 		)
-		return self.llm_client.generate(prompt)
+		try:
+			return self.llm_client.generate(prompt)
+		except Exception:
+			self._mark_llm_failure()
+			return self._deterministic_fallback_answer(
+				user_input=user_input,
+				contexts=contexts,
+				reason="local inference endpoint unavailable or too slow",
+			)
 
 	def _persist_turn(self, user_input: str, answer: str) -> None:
 		self.state_machine.transition(AgentState.PERSIST)

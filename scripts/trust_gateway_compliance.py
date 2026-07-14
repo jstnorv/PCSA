@@ -15,6 +15,7 @@ from agent.memory import SlidingWindowMemory
 from agent.setup_optimizer import LocalSetupOptimizer
 from agent.session_state import SessionState, TrustPreference
 from config import AppConfig
+import main
 
 
 class FakeEmbeddingClient:
@@ -36,9 +37,12 @@ class FakeVectorStore:
 class FakeLLM:
 	response: str
 	calls: int = 0
+	fail: bool = False
 
 	def generate(self, prompt: str) -> str:
 		_ = prompt
+		if self.fail:
+			raise RuntimeError("simulated llm failure")
 		self.calls += 1
 		return self.response
 
@@ -177,6 +181,24 @@ def run_checks() -> int:
 		)
 	)
 
+	failing_llm = FakeLLM(response="unused", fail=True)
+	agent_degraded = PCSAgent(
+		llm_client=failing_llm,
+		embedding_client=FakeEmbeddingClient(),
+		vector_store=FakeVectorStore(contexts=["local note one", "local note two"]),
+		memory=SlidingWindowMemory(max_turns=12),
+		retrieval_top_k=4,
+		session_state=SessionState(),
+		failure_cooldown_seconds=1,
+	)
+	degraded_result = agent_degraded.run_turn("Need a fast incident summary")
+	results.append(
+		_assert(
+			"Degraded mode provides deterministic fallback output",
+			"Operating in degraded local mode" in degraded_result,
+		)
+	)
+
 	strict_local_controller = DelegatedComputationController(
 		confidence_threshold=0.68,
 		complexity_threshold=0.72,
@@ -203,6 +225,14 @@ def run_checks() -> int:
 		_assert(
 			"Setup optimizer enforces strict-local policy",
 			optimized_config.strict_local_only,
+		)
+	)
+
+	doctor_exit_code = main.run_doctor()
+	results.append(
+		_assert(
+			"Doctor command completes successfully",
+			doctor_exit_code == 0,
 		)
 	)
 

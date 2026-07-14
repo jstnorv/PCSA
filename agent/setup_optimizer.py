@@ -37,9 +37,10 @@ class LocalSetupOptimizer:
 	def detect_capabilities(self, config: AppConfig) -> LocalCapabilityProfile:
 		cpu_count = os.cpu_count() or 1
 		total_memory_gb = self._detect_total_memory_gb()
+		probe_timeout = max(1, min(config.health_probe_timeout_seconds, config.ollama_timeout_seconds))
 		ollama_reachable, available_models = self._probe_ollama_models(
 			base_url=str(config.ollama_base_url),
-			timeout_seconds=config.ollama_timeout_seconds,
+			timeout_seconds=probe_timeout,
 		)
 		return LocalCapabilityProfile(
 			cpu_count=cpu_count,

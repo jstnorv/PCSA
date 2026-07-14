@@ -92,6 +92,14 @@ If no candidate satisfies constraints, setup must keep local-safe defaults and m
 - If always-trust-cloud: proceed to external delegation.
 7. Persist outcome and trust updates.
 
+### Degraded Mode Requirement
+
+When local inference or retrieval services are unavailable, timing out, or intermittently failing:
+
+- Runtime must enter degraded mode.
+- Degraded mode must return deterministic local utility output instead of hard failure.
+- Runtime should apply cooldown-based retry behavior to avoid repeated blocking latency spikes.
+
 ### Runtime Sufficiency Rule
 
 Insufficient local execution is true when any condition holds:
@@ -132,6 +140,8 @@ The controller is compliant only if all invariants hold:
 - No external execution occurs without insufficiency determination.
 - No external execution occurs without intercept confirmation when intercept_required is active.
 - Trust override is explicit, persisted, and user-controlled.
+- Service outages do not cause complete interaction failure; degraded local output remains available.
+- Startup defaults avoid heavy indexing unless explicitly requested.
 
 ## Mapping to Current Implementation
 
@@ -141,6 +151,9 @@ The controller is compliant only if all invariants hold:
 - Runtime intercept and trust commands: main.py
 - Persistent state location: config.py
 - Setup optimization and capability detection: agent/setup_optimizer.py
+- Degraded local fallback and cooldown handling: agent/execution_loop.py
+- Incremental indexing and startup ingestion behavior: core/pipeline.py and main.py
+- Local readiness diagnostics: main.py (`doctor` command)
 
 ## Future Extensions
 

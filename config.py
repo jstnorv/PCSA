@@ -14,11 +14,14 @@ class AppConfig(BaseModel):
 	vector_db_dir: Path = Field(default=Path("storage/vector_db"))
 	session_state_path: Path = Field(default=Path("storage/session_state.json"))
 	setup_profile_path: Path = Field(default=Path("storage/setup_profile.json"))
+	ingest_manifest_path: Path = Field(default=Path("storage/ingest_manifest.json"))
 
 	ollama_base_url: HttpUrl = Field(default="http://localhost:11434")
 	ollama_chat_model: str = Field(default="llama3.1")
 	ollama_embedding_model: str = Field(default="nomic-embed-text")
 	ollama_timeout_seconds: int = Field(default=60, ge=1)
+	health_probe_timeout_seconds: int = Field(default=3, ge=1)
+	failure_cooldown_seconds: int = Field(default=30, ge=1)
 	chunk_size_chars: int = Field(default=1200, ge=200)
 	chunk_overlap_chars: int = Field(default=200, ge=0)
 
@@ -33,6 +36,7 @@ class AppConfig(BaseModel):
 	user_latency_tolerance_ms: int = Field(default=12000, ge=500)
 	user_local_memory_budget_gb: float = Field(default=8.0, ge=1.0)
 	user_compute_budget: str = Field(default="balanced")
+	auto_ingest_on_chat_start: bool = Field(default=False)
 
 	def resolve_paths(self) -> "AppConfig":
 		"""Normalize relative paths against project root and create missing dirs."""
@@ -44,11 +48,14 @@ class AppConfig(BaseModel):
 			self.session_state_path = self.project_root / self.session_state_path
 		if not self.setup_profile_path.is_absolute():
 			self.setup_profile_path = self.project_root / self.setup_profile_path
+		if not self.ingest_manifest_path.is_absolute():
+			self.ingest_manifest_path = self.project_root / self.ingest_manifest_path
 
 		self.knowledge_base_dir.mkdir(parents=True, exist_ok=True)
 		self.vector_db_dir.mkdir(parents=True, exist_ok=True)
 		self.session_state_path.parent.mkdir(parents=True, exist_ok=True)
 		self.setup_profile_path.parent.mkdir(parents=True, exist_ok=True)
+		self.ingest_manifest_path.parent.mkdir(parents=True, exist_ok=True)
 		return self
 
 	@classmethod
@@ -60,10 +67,13 @@ class AppConfig(BaseModel):
 			vector_db_dir=Path(os.getenv("PCSA_VECTOR_DB_DIR", "storage/vector_db")),
 			session_state_path=Path(os.getenv("PCSA_SESSION_STATE_PATH", "storage/session_state.json")),
 			setup_profile_path=Path(os.getenv("PCSA_SETUP_PROFILE_PATH", "storage/setup_profile.json")),
+			ingest_manifest_path=Path(os.getenv("PCSA_INGEST_MANIFEST_PATH", "storage/ingest_manifest.json")),
 			ollama_base_url=os.getenv("PCSA_OLLAMA_BASE_URL", "http://localhost:11434"),
 			ollama_chat_model=os.getenv("PCSA_OLLAMA_CHAT_MODEL", "llama3.1"),
 			ollama_embedding_model=os.getenv("PCSA_OLLAMA_EMBED_MODEL", "nomic-embed-text"),
 			ollama_timeout_seconds=int(os.getenv("PCSA_OLLAMA_TIMEOUT_SECONDS", "60")),
+			health_probe_timeout_seconds=int(os.getenv("PCSA_HEALTH_PROBE_TIMEOUT_SECONDS", "3")),
+			failure_cooldown_seconds=int(os.getenv("PCSA_FAILURE_COOLDOWN_SECONDS", "30")),
 			chunk_size_chars=int(os.getenv("PCSA_CHUNK_SIZE_CHARS", "1200")),
 			chunk_overlap_chars=int(os.getenv("PCSA_CHUNK_OVERLAP_CHARS", "200")),
 			memory_window_size=int(os.getenv("PCSA_MEMORY_WINDOW_SIZE", "12")),
@@ -75,6 +85,7 @@ class AppConfig(BaseModel):
 			user_latency_tolerance_ms=int(os.getenv("PCSA_USER_LATENCY_TOLERANCE_MS", "12000")),
 			user_local_memory_budget_gb=float(os.getenv("PCSA_USER_LOCAL_MEMORY_BUDGET_GB", "8.0")),
 			user_compute_budget=os.getenv("PCSA_USER_COMPUTE_BUDGET", "balanced"),
+			auto_ingest_on_chat_start=os.getenv("PCSA_AUTO_INGEST_ON_CHAT_START", "false").strip().lower() in {"1", "true", "yes", "on"},
 		)
 		if instance.chunk_overlap_chars >= instance.chunk_size_chars:
 			raise ValueError("PCSA_CHUNK_OVERLAP_CHARS must be smaller than PCSA_CHUNK_SIZE_CHARS")

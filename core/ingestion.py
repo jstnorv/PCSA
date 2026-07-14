@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterator
+from typing import Iterator, Sequence
 
 
 @dataclass
@@ -21,6 +21,45 @@ def _iter_markdown_paths(knowledge_base_dir: Path) -> Iterator[Path]:
 	for path in knowledge_base_dir.rglob("*.md"):
 		if path.is_file():
 			yield path
+
+
+def _build_documents_for_paths(
+	paths: Sequence[Path],
+	knowledge_base_dir: Path,
+	chunk_size_chars: int,
+	chunk_overlap_chars: int,
+) -> list[MarkdownDocument]:
+	documents: list[MarkdownDocument] = []
+
+	for path in paths:
+		raw = path.read_text(encoding="utf-8", errors="ignore")
+		normalized = raw.strip()
+		if not normalized:
+			continue
+
+		source_rel_path = path.relative_to(knowledge_base_dir).as_posix()
+		chunks = _chunk_text(
+			text=normalized,
+			max_chars=chunk_size_chars,
+			overlap_chars=chunk_overlap_chars,
+		)
+
+		for chunk_index, (start_offset, end_offset, chunk_content) in enumerate(chunks):
+			content_hash = hashlib.sha1(chunk_content.encode("utf-8")).hexdigest()[:12]
+			doc_id = f"{source_rel_path}::chunk-{chunk_index:04d}::{content_hash}"
+			documents.append(
+				MarkdownDocument(
+					doc_id=doc_id,
+					source_path=str(path),
+					source_rel_path=source_rel_path,
+					chunk_index=chunk_index,
+					start_offset=start_offset,
+					end_offset=end_offset,
+					content=chunk_content,
+				)
+			)
+
+	return documents
 
 
 def _chunk_text(text: str, max_chars: int, overlap_chars: int) -> list[tuple[int, int, str]]:
@@ -67,34 +106,25 @@ def load_markdown_documents(
 	chunk_overlap_chars: int = 200,
 ) -> list[MarkdownDocument]:
 	"""Load markdown files and split them into deterministic chunked documents."""
-	documents: list[MarkdownDocument] = []
+	paths = list(_iter_markdown_paths(knowledge_base_dir))
+	return _build_documents_for_paths(
+		paths=paths,
+		knowledge_base_dir=knowledge_base_dir,
+		chunk_size_chars=chunk_size_chars,
+		chunk_overlap_chars=chunk_overlap_chars,
+	)
 
-	for path in _iter_markdown_paths(knowledge_base_dir):
-		raw = path.read_text(encoding="utf-8", errors="ignore")
-		normalized = raw.strip()
-		if not normalized:
-			continue
 
-		source_rel_path = path.relative_to(knowledge_base_dir).as_posix()
-		chunks = _chunk_text(
-			text=normalized,
-			max_chars=chunk_size_chars,
-			overlap_chars=chunk_overlap_chars,
-		)
-
-		for chunk_index, (start_offset, end_offset, chunk_content) in enumerate(chunks):
-			content_hash = hashlib.sha1(chunk_content.encode("utf-8")).hexdigest()[:12]
-			doc_id = f"{source_rel_path}::chunk-{chunk_index:04d}::{content_hash}"
-			documents.append(
-				MarkdownDocument(
-					doc_id=doc_id,
-					source_path=str(path),
-					source_rel_path=source_rel_path,
-					chunk_index=chunk_index,
-					start_offset=start_offset,
-					end_offset=end_offset,
-					content=chunk_content,
-				)
-			)
-
-	return documents
+def load_markdown_documents_for_paths(
+	knowledge_base_dir: Path,
+	paths: Sequence[Path],
+	chunk_size_chars: int = 1200,
+	chunk_overlap_chars: int = 200,
+) -> list[MarkdownDocument]:
+	"""Load a subset of markdown files and split them into deterministic chunks."""
+	return _build_documents_for_paths(
+		paths=list(paths),
+		knowledge_base_dir=knowledge_base_dir,
+		chunk_size_chars=chunk_size_chars,
+		chunk_overlap_chars=chunk_overlap_chars,
+	)
