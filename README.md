@@ -11,6 +11,17 @@ A local-first Python agent architecture for personal knowledge workflows using p
 - Minimal framework bloat
 - Plain-text Markdown workflow
 
+Public-first governance documents:
+
+- [MANIFESTO.md](MANIFESTO.md)
+- [ARCHITECTURE_OVERVIEW.md](ARCHITECTURE_OVERVIEW.md)
+- [SECURITY_BOUNDARY.md](SECURITY_BOUNDARY.md)
+
+Governance workflow templates:
+
+- [templates/adr-template.md](templates/adr-template.md)
+- [templates/risk-review-template.md](templates/risk-review-template.md)
+
 ## Architecture
 
 - `core/`: Markdown ingestion, embedding generation, and ChromaDB vector store management
